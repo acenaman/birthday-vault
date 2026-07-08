@@ -2,11 +2,17 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import confetti from "canvas-confetti";
 import { timeline, gallery, type TimelineItem } from "@/lib/media";
+import songAsset from "@/assets/audio/song.mp3.asset.json";
 
 // ============ Utility: Confetti helpers ============
-const heartShape = confetti.shapeFromPath({
-  path: "M12 21s-7-4.5-9.5-9C.5 8 3 4 6.5 4c2 0 3.5 1 5.5 3 2-2 3.5-3 5.5-3C21 4 23.5 8 21.5 12 19 16.5 12 21 12 21z",
-});
+let heartShape: ReturnType<typeof confetti.shapeFromPath> | "circle" = "circle";
+if (typeof window !== "undefined") {
+  try {
+    heartShape = confetti.shapeFromPath({
+      path: "M12 21s-7-4.5-9.5-9C.5 8 3 4 6.5 4c2 0 3.5 1 5.5 3 2-2 3.5-3 5.5-3C21 4 23.5 8 21.5 12 19 16.5 12 21 12 21z",
+    });
+  } catch { /* Path2D not supported */ }
+}
 
 function heartBurst(x = 0.5, y = 0.5) {
   confetti({
@@ -71,56 +77,26 @@ function playUnlockSound(ctx: AudioContext) {
   });
 }
 
-// Ambient romantic pad using WebAudio
+// Ambient music using uploaded mp3
 function useAmbientMusic() {
-  const getCtx = useAudioCtx();
-  const nodesRef = useRef<{ oscs: OscillatorNode[]; gain: GainNode } | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
   const [playing, setPlaying] = useState(false);
 
-  const start = () => {
-    const ctx = getCtx();
-    if (ctx.state === "suspended") ctx.resume();
-    if (nodesRef.current) return;
-    const master = ctx.createGain();
-    master.gain.value = 0;
-    master.gain.linearRampToValueAtTime(0.08, ctx.currentTime + 2);
-    master.connect(ctx.destination);
-    const notes = [261.63, 329.63, 392.0, 523.25]; // C major chord
-    const oscs = notes.map((f, i) => {
-      const o = ctx.createOscillator();
-      o.type = i % 2 === 0 ? "sine" : "triangle";
-      o.frequency.value = f;
-      const g = ctx.createGain();
-      g.gain.value = 0.25;
-      // slow LFO
-      const lfo = ctx.createOscillator();
-      lfo.frequency.value = 0.1 + i * 0.05;
-      const lfoGain = ctx.createGain();
-      lfoGain.gain.value = 0.08;
-      lfo.connect(lfoGain).connect(g.gain);
-      lfo.start();
-      o.connect(g).connect(master);
-      o.start();
-      return o;
-    });
-    nodesRef.current = { oscs, gain: master };
-    setPlaying(true);
-  };
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const a = new Audio(songAsset.url);
+    a.loop = true;
+    a.volume = 0.6;
+    audioRef.current = a;
+    return () => { a.pause(); audioRef.current = null; };
+  }, []);
 
-  const stop = () => {
-    const ctx = getCtx();
-    if (!nodesRef.current) return;
-    const { oscs, gain } = nodesRef.current;
-    gain.gain.cancelScheduledValues(ctx.currentTime);
-    gain.gain.linearRampToValueAtTime(0, ctx.currentTime + 0.6);
-    setTimeout(() => {
-      oscs.forEach((o) => { try { o.stop(); } catch { /* noop */ } });
-    }, 700);
-    nodesRef.current = null;
-    setPlaying(false);
+  const toggle = () => {
+    const a = audioRef.current;
+    if (!a) return;
+    if (playing) { a.pause(); setPlaying(false); }
+    else { a.play().then(() => setPlaying(true)).catch(() => setPlaying(false)); }
   };
-
-  const toggle = () => (playing ? stop() : start());
   return { playing, toggle };
 }
 
@@ -502,12 +478,13 @@ function Cake({ onComplete }: { onComplete: () => void }) {
 }
 
 // ============ Timeline ============
-function MediaBox({ item, className = "" }: { item: TimelineItem; className?: string }) {
+function MediaBox({ item, className = "", fit = "cover" }: { item: TimelineItem; className?: string; fit?: "cover" | "contain" }) {
+  const fitClass = fit === "contain" ? "object-contain" : "object-cover";
   if (item.type === "video") {
     return (
       <video
         src={item.url}
-        className={`h-full w-full object-cover ${className}`}
+        className={`h-full w-full ${fitClass} ${className}`}
         autoPlay
         loop
         muted
@@ -515,7 +492,7 @@ function MediaBox({ item, className = "" }: { item: TimelineItem; className?: st
       />
     );
   }
-  return <img src={item.url} alt={item.title} className={`h-full w-full object-cover ${className}`} loading="lazy" />;
+  return <img src={item.url} alt={item.title} className={`h-full w-full ${fitClass} ${className}`} loading="lazy" />;
 }
 
 function Timeline() {
@@ -535,8 +512,8 @@ function Timeline() {
           >
             <div className="absolute -left-[22px] top-3 h-4 w-4 rounded-full bg-rose-deep shadow-[0_0_12px_rgba(225,29,72,0.7)] ring-4 ring-cream" />
             <div className="glass overflow-hidden rounded-2xl">
-              <div className="aspect-video w-full overflow-hidden bg-blush">
-                <MediaBox item={item} />
+              <div className="flex max-h-[80vh] min-h-[220px] w-full items-center justify-center overflow-hidden bg-gradient-to-br from-blush to-cream">
+                <MediaBox item={item} fit="contain" />
               </div>
               <div className="px-4 py-3">
                 <div className="text-xs text-muted-foreground">Chapter {i + 1}</div>
@@ -637,11 +614,11 @@ function Reasons() {
 // ============ Coupons ============
 const COUPONS = [
   { icon: "🤗", title: "One Free Hug", note: "Redeem anytime, unlimited stock." },
-  { icon: "🍦", title: "Late Night Ice Cream", note: "Whatever flavor you want." },
+  { icon: "🍦", title: "Handmade Ice Cream From Me", note: "Whatever flavor you want." },
   { icon: "🕊️", title: "No Fighting Pass", note: "Use wisely, valid once a month." },
-  { icon: "🎬", title: "Movie Night", note: "Your pick, my company." },
-  { icon: "💐", title: "Surprise Flowers", note: "On the day you least expect." },
-  { icon: "📞", title: "3 AM Call", note: "For every 'I can't sleep' night." },
+  { icon: "💋", title: "One Free Kiss", note: "Redeemable on demand." },
+  { icon: "🍫", title: "Free Chocolates", note: "Sweet, just like you." },
+  { icon: "📸", title: "Unlimited Snaps", note: "Streaks forever, no excuses." },
 ];
 
 function Coupons() {
@@ -649,7 +626,7 @@ function Coupons() {
   return (
     <div className="mx-auto max-w-xl">
       <h3 className="mb-6 text-center text-3xl text-gradient-rose">Love Coupons 🎫</h3>
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         {COUPONS.map((c, i) => {
           const isFlipped = flipped.has(i);
           return (
@@ -662,29 +639,29 @@ function Coupons() {
                   return n;
                 });
               }}
-              className="relative aspect-[3/4] w-full"
+              className="relative min-h-[180px] w-full"
               style={{ perspective: "1000px" }}
             >
               <motion.div
                 animate={{ rotateY: isFlipped ? 180 : 0 }}
                 transition={{ duration: 0.6 }}
-                className="relative h-full w-full"
+                className="relative h-full min-h-[180px] w-full"
                 style={{ transformStyle: "preserve-3d" }}
               >
                 <div
-                  className="absolute inset-0 flex flex-col items-center justify-center rounded-2xl bg-gradient-to-br from-rose-deep to-rose-gold p-3 text-white shadow-lg"
+                  className="absolute inset-0 flex flex-col items-center justify-center rounded-2xl bg-gradient-to-br from-rose-deep to-rose-gold p-5 text-white shadow-lg"
                   style={{ backfaceVisibility: "hidden" }}
                 >
-                  <div className="text-3xl">💝</div>
-                  <div className="mt-2 text-xs opacity-90">Tap to reveal</div>
+                  <div className="text-5xl">💝</div>
+                  <div className="mt-3 text-sm opacity-90">Tap to reveal</div>
                 </div>
                 <div
-                  className="absolute inset-0 flex flex-col items-center justify-center rounded-2xl bg-gradient-to-br from-cream to-blush p-3 text-center text-rose-deep shadow-lg"
+                  className="absolute inset-0 flex flex-col items-center justify-center rounded-2xl bg-gradient-to-br from-cream to-blush p-5 text-center text-rose-deep shadow-lg"
                   style={{ backfaceVisibility: "hidden", transform: "rotateY(180deg)" }}
                 >
-                  <div className="text-3xl">{c.icon}</div>
-                  <div className="mt-1 text-sm font-bold">{c.title}</div>
-                  <div className="mt-1 text-[10px] opacity-80">{c.note}</div>
+                  <div className="text-4xl">{c.icon}</div>
+                  <div className="mt-2 text-base font-bold leading-tight">{c.title}</div>
+                  <div className="mt-2 text-xs opacity-80 leading-snug">{c.note}</div>
                 </div>
               </motion.div>
             </button>
@@ -710,8 +687,7 @@ function Letter() {
           </p>
           <p>
             You are the calm in my chaos, the silly in my serious, and the reason my heart still
-            skips a beat when my phone lights up with your name. Every random "raula", every long
-            drive, every stolen moment — I'd relive them all in a heartbeat.
+            skips a beat when I listen your name. I'd relive all our moments in a heartbeat.
           </p>
           <p>
             Thank you for choosing me, again and again. For loving me on my loud days and my quiet
@@ -738,7 +714,7 @@ function PepTalk() {
           A Quick Reality Check for My Bhalu 👑
         </h3>
         <p className="text-[15px] leading-relaxed text-foreground/85">
-          Listen up, <b>Meraa bchhhaa</b>. Look how far we’ve come! From the start of our raula to
+          Listen up, <b>Meraa bchhhaa</b>. Look how far we’ve come! From the start of our journey to
           literally everything else, it’s 100% God’s plan. The universe knew what it was doing when
           it paired us up. We’ve cracked milestones, handled the chaos, and honestly? There’s SO
           much more to go, so many more crazy memories to unlock. You're doing amazing, and I'm
